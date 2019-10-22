@@ -20,7 +20,7 @@ import string
 from tornado import httpclient
 
 import seesaw
-from seesaw.externalprocess import WgetDownload
+#from seesaw.externalprocess import WgetDownload
 from seesaw.pipeline import Pipeline
 from seesaw.project import Project
 from seesaw.util import find_executable
@@ -49,9 +49,6 @@ PYTHON = find_executable(
         '/usr/bin/python2',
         '/usr/local/bin/python2',
         './python2',
-        '/usr/bin/python',
-        '/usr/local/bin/python',
-        './python'
     ]
 )
 
@@ -167,14 +164,14 @@ class MoveFiles(SimpleTask):
 
         item['warc_new_base'] = item['warc_new_base'].replace("|", str(item['version']))
         os.rename('%(item_dir)s/%(warc_file_base)s.warc.gz' % item,
-                  '%(data_dir)s/%(warc_new_base)s.warc.gz' % item)
+                  '%(data_dir)s/%(warc_file_base)s.warc.gz' % item)
         os.rename('%(item_dir)s/%(warc_file_base)s.defer-urls.txt' % item,
-                  '%(data_dir)s/%(warc_new_base)s.defer-urls.txt' % item)
+                  '%(data_dir)s/%(warc_file_base)s.defer-urls.txt' % item)
 
         shutil.rmtree('%(item_dir)s' % item)
-        item['files']=[ ItemInterpolation('%(data_dir)s/%(warc_new_base)s.defer-urls.txt') ]
+        item['files']=[ ItemInterpolation('%(data_dir)s/%(warc_file_base)s.defer-urls.txt') ]
         if item['todo_url_count'] != '0':
-            item['files'].append( ItemInterpolation('%(data_dir)s/%(warc_new_base)s.warc.gz') )
+            item['files'].append( ItemInterpolation('%(data_dir)s/%(warc_file_base)s.warc.gz') )
 
 def get_hash(filename):
     with open(filename, 'rb') as in_file:
@@ -191,8 +188,8 @@ def stats_id_function(item):
     # NEW for 2014! Some accountability hashes and stats.
     d = {
         'pipeline_hash': PIPELINE_SHA1,
-        'ypy_hash': YP_SHA1,
-        'ygapy_hash': YGAP_SHA1,
+        'yp_hash': YP_SHA1,
+        'ygap_hash': YGAP_SHA1,
         'python_version': sys.version,
     }
 
@@ -203,28 +200,31 @@ class YgaArgs(object):
     def realize(self, item):
         yga_args = [
             PYTHON,
-            '-U', USER_AGENT,
-            '-nv',
-            '--no-cookies',
-            '--lua-script', 'yourshot-static.lua',
-            '-o', ItemInterpolation('%(item_dir)s/wget.log'),
-            '--no-check-certificate',
-            '--output-document', ItemInterpolation('%(item_dir)s/wget.tmp'),
-            '--truncate-output',
-            '-e', 'robots=off',
-            '--rotate-dns',
+            'yahoo.py',
+            '-a',
+            '-e'
+            #'-U', USER_AGENT,
+            #'-nv',
+            #'--no-cookies',
+            #'--lua-script', 'yourshot-static.lua',
+            #'-o', ItemInterpolation('%(item_dir)s/wget.log'),
+            #'--no-check-certificate',
+            #'--output-document', ItemInterpolation('%(item_dir)s/wget.tmp'),
+            #'--truncate-output',
+            #'-e', 'robots=off',
+            #'--rotate-dns',
             # '--recursive', '--level=inf',
             # '--no-parent',
             # '--page-requisites',
-            '--timeout', '30',
-            '--tries', 'inf',
+            #'--timeout', '30',
+            #'--tries', 'inf',
             # '--domains', 'nationalgeographic.com',
             # '--span-hosts',
-            '--waitretry', '30',
-            '--warc-file', ItemInterpolation('%(item_dir)s/%(warc_file_base)s'),
-            '--warc-header', 'operator: Archive Team',
-            '--warc-header', 'yourshot-static-dld-script-version: ' + VERSION,
-            '--warc-header', ItemInterpolation('yourshot-static-item: %(item_name)s'),
+            #'--waitretry', '30',
+            #'--warc-file', ItemInterpolation('%(item_dir)s/%(warc_file_base)s'),
+            #'--warc-header', 'operator: Archive Team',
+            #'--warc-header', 'yourshot-static-dld-script-version: ' + VERSION,
+            #'--warc-header', ItemInterpolation('yourshot-static-item: %(item_name)s'),
             # --warc-header yourshot-photo-id: ... filled in below
             # '--header', 'Accept-Encoding: gzip',
             # '--compression', 'gzip'
@@ -308,6 +308,27 @@ class YgaArgs(object):
         return realize(wget_args, item)
 
 
+class YgaDownload(ExternalProcess):
+    '''Download with process runner.'''
+    def __init__(self, args, max_tries=1, accept_on_exit_code=None,
+                 retry_on_exit_code=None, env=None, stdin_data_function=None):
+        ExternalProcess.__init__(
+            self, "YgaDownload",
+            args=args, max_tries=max_tries,
+            accept_on_exit_code=(accept_on_exit_code
+                                 if accept_on_exit_code is not None else [0]),
+            retry_on_exit_code=retry_on_exit_code,
+            env=env)
+        self.stdin_data_function = stdin_data_function
+
+    def stdin_data(self, item):
+        if self.stdin_data_function:
+            return self.stdin_data_function(item)
+        else:
+            return b""
+
+
+
 ###########################################################################
 # Initialize the project.
 #
@@ -331,9 +352,9 @@ pipeline = Pipeline(
     CheckIP(),
     CheckBan(),
     GetItemFromTracker('http://%s/%s' % (TRACKER_HOST, TRACKER_ID), downloader, VERSION),
-    PrepareDirectories(warc_prefix='yourshot-static'),
-    WgetDownload(
-        WgetArgs(),
+    PrepareDirectories(warc_prefix='yga-py'),
+    YgaDownload(
+        YgaArgs(),
         max_tries=0,              # 2,          #changed
         accept_on_exit_code=[0],  # [0, 4, 8],  #changed
         env={
